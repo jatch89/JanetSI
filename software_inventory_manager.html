@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Software Inventory Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="https://placehold.co/192x192/1f2937/ffffff?text=SIM">
+
+    <!-- Chosen Palette: Midnight Slate (Dark grays, blues, and amber/yellow for highlights) -->
+    <!-- Application Structure Plan: A single-page dashboard. The main view is a header with key metrics (stat cards) and a main content area with controls (search, filters) and the interactive inventory table. A modal overlay will be used for adding/editing items. This structure is chosen for high information density and task-focus, as an IT manager needs to see status at a glance and take immediate action (add, edit, filter) without navigating pages. -->
+    <!-- Visualization & Content Choices: Report Info: Dashboard metrics (Total Active, Total Cost, Expiring Soon, Unassigned). Goal: Inform (at a glance). Viz/Presentation: 4 styled 'Stat Cards' (HTML/Tailwind). Interaction: None, read-only display updated by JS. Justification: Quick, high-level overview as requested. | Report Info: Inventory List. Goal: Organize, Compare, Inform. Viz/Presentation: HTML <table> styled with Tailwind. Interaction: JS-based search (text input) and filtering (dropdowns) will dynamically hide/show table rows (tr.style.display). Row highlighting (e.g., bg-yellow-800/20) will be applied via JS for items with renewalDate within 90 days. Justification: A table is the clearest way to present this structured data, and JS-driven filtering provides the requested interactive exploration. | Report Info: Add/Edit Item. Goal: User Input. Viz/Presentation: HTML/Tailwind modal (hidden by default, shown with JS). Interaction: Form inputs, 'Save' button triggers JS to update the data array and re-render the table. 'Cancel' hides modal. Justification: A modal avoids page reloads and keeps the user in the context of the dashboard. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            color: #d1d5db;
+        }
+        .stat-card {
+            background-color: #1f2937;
+            border: 1px solid #374151;
+        }
+        .modal {
+            background-color: rgba(0, 0, 0, 0.5);
+            transition: opacity 0.3s ease;
+        }
+        .modal-content {
+            background-color: #1f2937;
+            border: 1px solid #374151;
+            max-height: 90vh;
+        }
+        
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 20px;
+            border: 2px solid #1f2937;
+        }
+        
+        th {
+            background-color: #374151;
+        }
+        
+        tr:nth-child(even) {
+            background-color: #1f2937;
+        }
+        tr:nth-child(odd) {
+            background-color: #1e2633;
+        }
+        
+        .form-input, .form-select {
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            color: #d1d5db;
+        }
+        .form-input::placeholder {
+            color: #9ca3af;
+        }
+        
+        .badge {
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-green { background-color: #059669; color: #d1fae5; }
+        .badge-red { background-color: #dc2626; color: #fee2e2; }
+        .badge-gray { background-color: #6b7280; color: #f3f4f6; }
+        .badge-blue { background-color: #2563eb; color: #dbeafe; }
+        .badge-yellow { background-color: #d97706; color: #fef3c7; }
+        .badge-purple { background-color: #7c3aed; color: #ede9fe; }
+
+        .renewal-warning {
+            background-color: rgba(217, 119, 6, 0.1);
+            border-left: 4px solid #d97706;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div classs="max-w-7xl mx-auto">
+        
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+            <h1 class="text-3xl font-bold text-white">Software Inventory Manager</h1>
+            <button id="addItemBtn" class="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors">
+                + Add New Item
+            </button>
+        </header>
+
+        <!-- Dashboard Metrics -->
+        <section class="mb-6">
+            <h2 class="text-xl font-semibold mb-3 text-gray-300">At a Glance</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div id="totalActiveCard" class="stat-card p-4 rounded-lg shadow">
+                    <h3 class="text-sm font-medium text-gray-400">Total Active Items</h3>
+                    <p class="text-3xl font-bold text-white">0</p>
+                </div>
+                <div id="totalCostCard" class="stat-card p-4 rounded-lg shadow">
+                    <h3 class="text-sm font-medium text-gray-400">Total Annual Cost (Active)</h3>
+                    <p class="text-3xl font-bold text-white">$0.00</p>
+                </div>
+                <div id="expiringSoonCard" class="stat-card p-4 rounded-lg shadow">
+                    <h3 class="text-sm font-medium text-gray-400">Expiring Soon (90 Days)</h3>
+                    <p class="text-3xl font-bold text-red-400">0</p>
+                </div>
+                <div id="unassignedCard" class="stat-card p-4 rounded-lg shadow">
+                    <h3 class="text-sm font-medium text-gray-400">Unassigned Licenses</h3>
+                    <p class="text-3xl font-bold text-yellow-400">0</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Filters & Table Section -->
+        <section class="stat-card p-4 sm:p-6 rounded-lg shadow">
+            <h2 class="text-xl font-semibold mb-4 text-gray-300">Inventory List</h2>
+            
+            <!-- Filter Controls -->
+            <div class="flex flex-col md:flex-row gap-4 mb-4">
+                <input type="text" id="searchInput" class="form-input w-full md:w-1/3 rounded-lg" placeholder="Search by name, user, or category...">
+                
+                <select id="statusFilter" class="form-select w-full md:w-auto rounded-lg">
+                    <option value="">All Statuses</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Expired">Expired</option>
+                </select>
+                
+                <select id="typeFilter" class="form-select w-full md:w-auto rounded-lg">
+                    <option value="">All Types</option>
+                    <option value="Subscription">Subscription</option>
+                    <option value="Perpetual License">Perpetual License</option>
+                    <option value="Freeware">Freeware</option>
+                </select>
+                
+                <select id="renewalFilter" class="form-select w-full md:w-auto rounded-lg">
+                    <option value="">All Renewals</option>
+                    <option value="30">Renewing in 30 Days</option>
+                    <option value="60">Renewing in 60 Days</option>
+                    <option value="90">Renewing in 90 Days</option>
+                </select>
+            </div>
+
+            <!-- Inventory Table -->
+            <div class="overflow-x-auto rounded-lg border border-gray-700">
+                <table class="w-full min-w-max text-left text-sm text-gray-300">
+                    <thead class="text-xs text-gray-200 uppercase">
+                        <tr>
+                            <th scope="col" class="py-3 px-4">Name</th>
+                            <th scope="col" class="py-3 px-4">Status</th>
+                            <th scope="col" class="py-3 px-4">Type</th>
+                            <th scope="col" class="py-3 px-4">Category</th>
+                            <th scope="col" class="py-3 px-4">Assigned To</th>
+                            <th scope="col" class="py-3 px-4">Annual Cost</th>
+                            <th scope="col" class="py-3 px-4">Renewal Date</th>
+                            <th scope="col" class="py-3 px-4">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventoryTableBody">
+                        <!-- Rows will be injected by JS -->
+                    </tbody>
+                </table>
+                <div id="loadingIndicator" class="text-center text-blue-400 py-8 hidden">Loading inventory data...</div>
+            </div>
+            <p id="noResults" class="text-center text-gray-400 py-8 hidden">No items match your filters.</p>
+        </section>
+    </div>
+
+    <!-- Add/Edit Item Modal -->
+    <div id="itemModal" class="modal fixed inset-0 z-50 flex items-center justify-center p-4 hidden">
+        <div class="modal-content w-full max-w-2xl rounded-lg shadow-xl overflow-y-auto">
+            <form id="itemForm" class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="modalTitle" class="text-xl font-semibold text-white">Add New Item</h3>
+                    <button type="button" id="closeModalBtn" class="text-gray-400 hover:text-white">&times;</button>
+                </div>
+
+                <input type="hidden" id="itemId">
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <label for="name" class="block mb-1 text-sm font-medium text-gray-300">Software Name*</label>
+                        <input type="text" id="name" class="form-input w-full rounded-lg" required>
+                    </div>
+
+                    <div>
+                        <label for="status" class="block mb-1 text-sm font-medium text-gray-300">Status*</label>
+                        <select id="status" class="form-select w-full rounded-lg" required>
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                            <option value="Expired">Expired</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="type" class="block mb-1 text-sm font-medium text-gray-300">Type*</label>
+                        <select id="type" class="form-select w-full rounded-lg" required>
+                            <option value="Subscription">Subscription</option>
+                            <option value="Perpetual License">Perpetual License</option>
+                            <option value="Freeware">Freeware</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label for="category" class="block mb-1 text-sm font-medium text-gray-300">Category</label>
+                        <input type="text" id="category" class="form-input w-full rounded-lg" placeholder="e.g., Design, Development">
+                    </div>
+
+                    <div>
+                        <label for="assignedTo" class="block mb-1 text-sm font-medium text-gray-300">Assigned To</label>
+                        <input type="text" id="assignedTo" class="form-input w-full rounded-lg" placeholder="Unassigned">
+                    </div>
+                    
+                    <div>
+                        <label for="purchaseDate" class="block mb-1 text-sm font-medium text-gray-300">Purchase Date</label>
+                        <input type="date" id="purchaseDate" class="form-input w-full rounded-lg" style="color-scheme: dark;">
+                    </div>
+
+                    <div>
+                        <label for="renewalDate" class="block mb-1 text-sm font-medium text-gray-300">Renewal Date</label>
+                        <input type="date" id="renewalDate" class="form-input w-full rounded-lg" style="color-scheme: dark;">
+                    </div>
+
+                    <div>
+                        <label for="annualCost" class="block mb-1 text-sm font-medium text-gray-300">Annual Cost (USD)*</label>
+                        <input type="number" id="annualCost" class="form-input w-full rounded-lg" value="0" min="0" step="0.01" required>
+                    </div>
+                    
+                    <div>
+                        <label for="licenseKey" class="block mb-1 text-sm font-medium text-gray-300">License Key</label>
+                        <input type="text" id="licenseKey" class="form-input w-full rounded-lg">
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label for="notes" class="block mb-1 text-sm font-medium text-gray-300">Notes</label>
+                        <textarea id="notes" class="form-input w-full rounded-lg" rows="3"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-4 mt-6">
+                    <button type="button" id="deleteItemBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow hidden">Delete</button>
+                    <button type="button" id="cancelModalBtn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow">Save Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-green-600 text-white py-2 px-4 rounded-lg shadow-lg hidden transition-opacity duration-300">
+        <span id="toastMessage"></span>
+    </div>
+
+    <!-- Inline Manifest Registration (Service Worker removed due to URL protocol error) -->
+    <script>
+        const manifest = {
+            name: "Inventory Manager",
+            short_name: "SIM",
+            description: "Software License and Subscription Tracker",
+            start_url: "/",
+            display: "standalone",
+            background_color: "#111827",
+            theme_color: "#1f2937",
+            icons: [
+                {
+                    src: "https://placehold.co/192x192/1f2937/ffffff?text=SIM",
+                    sizes: "192x192",
+                    type: "image/png"
+                },
+                {
+                    src: "https://placehold.co/512x512/1f2937/ffffff?text=SIM",
+                    sizes: "512x512",
+                    type: "image/png"
+                }
+            ]
+        };
+
+        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+        const manifestURL = URL.createObjectURL(manifestBlob);
+        
+        const link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = manifestURL;
+        document.head.appendChild(link);
+    </script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, setDoc, connectFirestoreEmulator } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- Global Variables and Firebase Setup ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let inventoryCollectionRef;
+        let currentUserId = null;
+        let inventoryData = [];
+
+        const tableBody = document.getElementById('inventoryTableBody');
+        const noResultsEl = document.getElementById('noResults');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        
+        const searchInput = document.getElementById('searchInput');
+        const statusFilter = document.getElementById('statusFilter');
+        const typeFilter = document.getElementById('typeFilter');
+        const renewalFilter = document.getElementById('renewalFilter');
+        
+        const modal = document.getElementById('itemModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const form = document.getElementById('itemForm');
+        const deleteBtn = document.getElementById('deleteItemBtn');
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toastMessage');
+
+        function showToast(message, isError = false) {
+            toastMessage.textContent = message;
+            toast.classList.remove('hidden', 'bg-green-600', 'bg-red-600');
+            toast.classList.add(isError ? 'bg-red-600' : 'bg-green-600');
+            toast.style.opacity = 1;
+            setTimeout(() => {
+                toast.style.opacity = 0;
+                setTimeout(() => toast.classList.add('hidden'), 300);
+            }, 3000);
+        }
+
+        function getStatusBadge(status) {
+            switch (status) {
+                case 'Active': return '<span class="badge badge-green">Active</span>';
+                case 'Inactive': return '<span class="badge badge-gray">Inactive</span>';
+                case 'Expired': return '<span class="badge badge-red">Expired</span>';
+                default: return `<span class="badge badge-gray">${status}</span>`;
+            }
+        }
+
+        function getTypeBadge(type) {
+            switch (type) {
+                case 'Subscription': return '<span class="badge badge-blue">Subscription</span>';
+                case 'Perpetual License': return '<span class="badge badge-purple">Perpetual</span>';
+                case 'Freeware': return '<span class="badge badge-yellow">Freeware</span>';
+                default: return `<span class="badge badge-gray">${type}</span>`;
+            }
+        }
+        
+        function isExpiring(renewalDateStr, days) {
+            if (!renewalDateStr) return false;
+            const today = new Date();
+            const renewalDate = new Date(renewalDateStr);
+            // Ensure we compare dates only
+            renewalDate.setHours(0, 0, 0, 0); 
+            today.setHours(0, 0, 0, 0); 
+
+            const compareDate = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
+            return renewalDate >= today && renewalDate <= compareDate;
+        }
+
+        function updateMetrics(data) {
+            const activeItems = data.filter(i => i.status === 'Active');
+            const totalCost = activeItems.reduce((sum, i) => sum + i.annualCost, 0);
+            const expiringSoon = data.filter(i => i.status === 'Active' && isExpiring(i.renewalDate, 90)).length;
+            const unassigned = data.filter(i => i.status === 'Active' && (i.assignedTo.toLowerCase() === 'unassigned' || !i.assignedTo)).length;
+            
+            document.getElementById('totalActiveCard').querySelector('p').textContent = activeItems.length;
+            document.getElementById('totalCostCard').querySelector('p').textContent = `$${totalCost.toFixed(2)}`;
+            document.getElementById('expiringSoonCard').querySelector('p').textContent = expiringSoon;
+            document.getElementById('unassignedCard').querySelector('p').textContent = unassigned;
+        }
+
+        function filterAndRenderTable(data) {
+            inventoryData = data; // Update local state with fresh data
+            const searchTerm = searchInput.value.toLowerCase();
+            const status = statusFilter.value;
+            const type = typeFilter.value;
+            const renewal = renewalFilter.value;
+            
+            const filteredData = data.filter(item => {
+                const matchesSearch = !searchTerm ||
+                    item.name.toLowerCase().includes(searchTerm) ||
+                    item.assignedTo.toLowerCase().includes(searchTerm) ||
+                    item.category.toLowerCase().includes(searchTerm);
+                    
+                const matchesStatus = !status || item.status === status;
+                const matchesType = !type || item.type === type;
+                
+                const matchesRenewal = !renewal ||
+                    (renewal === '30' && isExpiring(item.renewalDate, 30)) ||
+                    (renewal === '60' && isExpiring(item.renewalDate, 60)) ||
+                    (renewal === '90' && isExpiring(item.renewalDate, 90));
+                    
+                return matchesSearch && matchesStatus && matchesType && matchesRenewal;
+            });
+
+            tableBody.innerHTML = '';
+            loadingIndicator.classList.add('hidden');
+
+            if (filteredData.length === 0) {
+                noResultsEl.classList.remove('hidden');
+                tableBody.classList.add('hidden');
+            } else {
+                noResultsEl.classList.add('hidden');
+                tableBody.classList.remove('hidden');
+            
+                filteredData.forEach(item => {
+                    let warningClass = '';
+                    if (isExpiring(item.renewalDate, 90) && item.status === 'Active') {
+                        warningClass = 'renewal-warning';
+                    }
+                    
+                    const tr = document.createElement('tr');
+                    tr.className = `hover:bg-gray-700 ${warningClass}`;
+                    tr.innerHTML = `
+                        <td class="py-3 px-4 font-medium text-white">${item.name}</td>
+                        <td class="py-3 px-4">${getStatusBadge(item.status)}</td>
+                        <td class="py-3 px-4">${getTypeBadge(item.type)}</td>
+                        <td class="py-3 px-4">${item.category}</td>
+                        <td class="py-3 px-4">${item.assignedTo}</td>
+                        <td class="py-3 px-4">${item.annualCost > 0 ? `$${item.annualCost.toFixed(2)}` : 'N/A'}</td>
+                        <td class="py-3 px-4">${item.renewalDate || 'N/A'}</td>
+                        <td class="py-3 px-4">
+                            <button data-id="${item.id}" class="edit-btn text-blue-400 hover:text-blue-300 font-medium">Edit</button>
+                        </td>
+                    `;
+                    tableBody.appendChild(tr);
+                });
+            }
+            
+            updateMetrics(data);
+        }
+
+        async function setupFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Sign in using the custom token or anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        // Define the public collection path
+                        inventoryCollectionRef = collection(db, `artifacts/${appId}/public/data/softwareInventory`);
+                        
+                        // Start real-time listener for data
+                        startRealTimeListener();
+                    } else {
+                        console.error('User is not authenticated.');
+                        loadingIndicator.textContent = 'Authentication failed. Cannot load data.';
+                    }
+                });
+            } catch (error) {
+                console.error('Firebase setup failed:', error);
+                loadingIndicator.textContent = 'Error initializing application.';
+            }
+        }
+
+        function startRealTimeListener() {
+            loadingIndicator.classList.remove('hidden');
+            onSnapshot(inventoryCollectionRef, (snapshot) => {
+                const fetchedData = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                // Filter and render the table based on the full data set and current filter settings
+                filterAndRenderTable(fetchedData); 
+            }, (error) => {
+                console.error('Error fetching inventory:', error);
+                showToast('Failed to load inventory data.', true);
+                loadingIndicator.textContent = 'Error loading data.';
+            });
+        }
+
+        function openModal(item = null) {
+            form.reset();
+            if (item) {
+                modalTitle.textContent = 'Edit Item';
+                document.getElementById('itemId').value = item.id;
+                document.getElementById('name').value = item.name;
+                document.getElementById('status').value = item.status;
+                document.getElementById('type').value = item.type;
+                document.getElementById('category').value = item.category;
+                document.getElementById('assignedTo').value = item.assignedTo;
+                document.getElementById('purchaseDate').value = item.purchaseDate;
+                document.getElementById('renewalDate').value = item.renewalDate;
+                document.getElementById('annualCost').value = item.annualCost;
+                document.getElementById('licenseKey').value = item.licenseKey;
+                document.getElementById('notes').value = item.notes;
+                deleteBtn.classList.remove('hidden');
+            } else {
+                modalTitle.textContent = 'Add New Item';
+                document.getElementById('itemId').value = '';
+                deleteBtn.classList.add('hidden');
+            }
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            modal.classList.add('hidden');
+        }
+
+        async function saveItem(e) {
+            e.preventDefault();
+            const id = document.getElementById('itemId').value;
+            const itemData = {
+                name: document.getElementById('name').value,
+                status: document.getElementById('status').value,
+                type: document.getElementById('type').value,
+                category: document.getElementById('category').value || '',
+                assignedTo: document.getElementById('assignedTo').value || 'Unassigned',
+                purchaseDate: document.getElementById('purchaseDate').value || '',
+                renewalDate: document.getElementById('renewalDate').value || '',
+                annualCost: parseFloat(document.getElementById('annualCost').value) || 0,
+                licenseKey: document.getElementById('licenseKey').value || '',
+                notes: document.getElementById('notes').value || '',
+                // Ensure every document has a 'createdBy' field for security rules
+                createdBy: currentUserId, 
+                createdAt: new Date().toISOString()
+            };
+
+            if (!itemData.name) {
+                showToast('Software Name is required.', true);
+                return;
+            }
+
+            try {
+                if (id) {
+                    await updateDoc(doc(inventoryCollectionRef, id), itemData);
+                    showToast('Item updated successfully.');
+                } else {
+                    await addDoc(inventoryCollectionRef, itemData);
+                    showToast('Item added successfully.');
+                }
+                closeModal();
+            } catch (error) {
+                console.error('Error saving item:', error);
+                showToast(`Failed to save item. Error: ${error.message}`, true);
+            }
+        }
+
+        async function deleteItem() {
+            const id = document.getElementById('itemId').value;
+            if (!id) return;
+            
+            try {
+                await deleteDoc(doc(inventoryCollectionRef, id));
+                showToast('Item deleted successfully.', true);
+                closeModal();
+            } catch (error) {
+                console.error('Error deleting item:', error);
+                showToast(`Failed to delete item. Error: ${error.message}`, true);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupFirebase();
+
+            // Event Listeners for UI
+            document.getElementById('addItemBtn').addEventListener('click', () => openModal());
+            document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+            document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+            form.addEventListener('submit', saveItem);
+            deleteBtn.addEventListener('click', deleteItem);
+            
+            tableBody.addEventListener('click', (e) => {
+                if (e.target.classList.contains('edit-btn')) {
+                    const id = e.target.dataset.id;
+                    const item = inventoryData.find(i => i.id === id);
+                    if (item) openModal(item);
+                }
+            });
+
+            // Re-render the table with current filters whenever an input changes
+            [searchInput, statusFilter, typeFilter, renewalFilter].forEach(el => {
+                el.addEventListener('input', () => filterAndRenderTable(inventoryData));
+            });
+        });
+    </script>
+</body>
+</html>
